@@ -1,0 +1,8 @@
+.vscode/
+build/
+checkpoints_sam/
+logs/
+source/
+visual_results/
+dense_sam.egg-info/
+**/__pycache__
