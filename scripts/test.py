@@ -1,11 +1,11 @@
 import os
 import torch
 import argparse
-from utils import set_seed
-from models.dense_sam import DenseSAMNet
-from datasets.create_loader import gene_loader_eval
+from densesam.utils import set_seed
+from densesam.models.dense_sam import DenseSAMNet
+from densesam.datasets.create_loader import gene_loader_eval
 from mmengine.config import Config
-from utils.metrics import get_metrics
+from densesam.utils.metrics import get_metrics
 from scripts.main import val_one_epoch
 
 parser = argparse.ArgumentParser()
@@ -64,13 +64,13 @@ if __name__ == "__main__":
 
 
 '''
-draw_building_pred draw_cell_pred draw_boundary_pred draw_cell_color
+draw_building_pred draw_building_split_pred draw_cell_pred draw_boundary_pred draw_cell_color
 
 python scripts/test.py \
-    logs/abalation/cpm17/06_01_22/config.py \
-    logs/abalation/cpm17/06_01_22 \
-    logs/abalation/cpm17/06_01_22/checkpoints/best.pth \
+    logs/cpm17/config.py \
+    logs/cpm17 \
+    logs/cpm17/checkpoints/best.pth \
     --visual_pred \
-    --draw_func draw_cell_color \
-    --visual_interval 20
+    --draw_func draw_building_split_pred \
+    --visual_interval 1
 '''

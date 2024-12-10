@@ -1,11 +1,11 @@
 import os
 import torch
 import argparse
-from utils import set_seed, get_logger, get_train_strategy
-from models.dense_sam import DenseSAMNet
-from datasets.create_loader import gene_loader_trainval
+from densesam.utils import set_seed, get_logger, get_train_strategy
+from densesam.models.dense_sam import DenseSAMNet
+from densesam.datasets.create_loader import gene_loader_trainval
 from mmengine.config import Config
-from utils.metrics import get_metrics
+from densesam.utils.metrics import get_metrics
 from scripts.main import train_one_epoch,val_one_epoch
 
 parser = argparse.ArgumentParser()
@@ -16,7 +16,6 @@ parser.add_argument('--record_save_dir', type=str)
 parser.add_argument('--seed', type=int, default=1234, help='random seed')
 parser.add_argument('--print_interval', type=int, default=10, help='random seed')
 parser.add_argument('--device', type=str, default='cuda:0')
-parser.add_argument('--save_each_epoch', action='store_true')
 
 args = parser.parse_args()
 
@@ -28,15 +27,15 @@ def main(logger_name, cfg):
 
     # register model
     model = DenseSAMNet(
-                sm_depth = cfg.semantic_module_depth,
-                use_inner_feat = cfg.use_inner_feat,
-                use_boundary_head = cfg.use_boundary_head,
-                use_embed = cfg.dataset.load_embed,
-                sam_ckpt = cfg.sam_ckpt,
-                sam_type = cfg.sam_type,
-                device = device,
-                inter_idx = cfg.inter_idx
-            ).to(device)
+        sm_depth = cfg.semantic_module_depth,
+        use_inner_feat = cfg.use_inner_feat,
+        use_boundary_head = cfg.use_boundary_head,
+        use_embed = cfg.dataset.load_embed,
+        sam_ckpt = cfg.sam_ckpt,
+        sam_type = cfg.sam_type,
+        device = device,
+        inter_idx = cfg.inter_idx
+    ).to(device)
     
     # create logger
     logger,files_save_dir = get_logger(
@@ -74,7 +73,7 @@ def main(logger_name, cfg):
         if cfg.best_score_index == 'inst':
             index = cfg.inst_indicator
             if cfg.inst_indicator == 'all':
-                index = 'AJI_plus'
+                index = 'PQ'
             best_score = metrics['inst'][index]
             
         if best_score > max_value:
@@ -99,7 +98,7 @@ if __name__ == "__main__":
     device = torch.device(args.device)
 
     d_cfg = Config.fromfile(args.dataset_config_file)
-    model_strategy_config_file = 'configs/model_strategy.py'
+    model_strategy_config_file = 'densesam/configs/model_strategy.py'
     m_s_cfg = Config.fromfile(model_strategy_config_file)
 
     cfg = Config()
@@ -117,8 +116,7 @@ if __name__ == "__main__":
 
 '''
 python scripts/train.py \
-    configs/datasets/whu.py \
-    --record_save_dir logs/whu \
-    --print_interval 50
-    --save_each_epoch
+    densesam/configs/datasets/lip.py \
+    --record_save_dir logs/rebuttal/lip \
+    --print_interval 30
 '''

@@ -1,4 +1,4 @@
-from utils import show_multi_mask,show_mask
+from densesam.utils import show_multi_mask,show_mask
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
@@ -179,3 +179,40 @@ def draw_building_pred(datainfo:DetDataSample, pred_info,pred_save_dir):
     plt.tight_layout()
     plt.savefig(f'{pred_save_dir}/{image_name}')
     plt.close()
+
+
+def draw_building_split_pred(datainfo:DetDataSample, pred_info,pred_save_dir):
+    '''
+    Args:
+        pred_mask: tensor, shape is (h,w)
+    '''
+    img_path = datainfo.img_path
+    image_name = img_path.split('/')[-1]
+    image = cv2.imread(img_path)
+    img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+    rgb = [47, 243, 15]
+
+    gt_mask = datainfo.gt_sem_seg.sem_seg
+    pred_mask = pred_info['pred_mask']
+
+    fig = plt.figure(figsize=(18,6))
+    ax = fig.add_subplot(131)
+    ax.imshow(img)
+    ax.set_title('image')
+    ax.set_axis_off()
+
+    ax = fig.add_subplot(132)
+    ax.imshow(gt_mask[0].cpu().numpy(), cmap='gray')
+    ax.set_title('gt mask')
+    ax.set_axis_off()
+
+    ax = fig.add_subplot(133)
+    ax.imshow(pred_mask.cpu().numpy(), cmap='gray')
+    ax.set_title('pred mask')
+    ax.set_axis_off()
+
+    plt.tight_layout()
+    plt.savefig(f'{pred_save_dir}/{image_name}')
+    plt.close()
+
