@@ -1,5 +1,5 @@
 import torch
-from densesam.utils import calc_loss,onehot2instmask
+from densesam.utils import calc_loss,contrastive_loss,onehot2instmask
 from densesam.utils.metrics import find_connect
 from tqdm import tqdm
 import numpy as np
@@ -45,6 +45,13 @@ def train_one_epoch(model, train_loader, optimizer, logger, device, cfg, print_i
             targets = (gt_foreground_masks, None)
         
         loss = calc_loss(pred_logits=pred_logits, target_masks=targets, args=cfg)
+
+        contrast_feat = outputs['contrast_feat']    # (bs, h*w, c)
+        if contrast_feat is not None:
+            token_gt = F.interpolate(gt_foreground_masks.unsqueeze(1),(64,64),mode="nearest")
+            token_gt = token_gt.flatten(1)    # (bs, h*w)
+            cont_loss = contrastive_loss(contrast_feat, token_gt, cfg.temperature)
+            loss = loss + 0.1*cont_loss
         
         optimizer.zero_grad()
         loss.backward()
@@ -62,7 +69,7 @@ def val_one_epoch(model, val_loader, evaluators, device, cfg, visual_args=None):
             outputs = model(sampled_batch)
         logits = outputs['logits_256']  # (bs or k_prompt, 3, 256, 256)
 
-        # specified_image_name = 'image_03_0.png'
+        # specified_image_name = 'image_11_2.png'
         # all_names = [item.img_path.split('/')[-1] for item in sampled_batch['data_samples']]
         # if specified_image_name not in all_names:
         #     continue
@@ -72,8 +79,8 @@ def val_one_epoch(model, val_loader, evaluators, device, cfg, visual_args=None):
             origin_size = datainfo.ori_shape
             logits_origin = F.interpolate(
                 logits[idx].unsqueeze(0),
-                # origin_size,
-                (1024,1024),
+                origin_size,
+                # (1024,1024),
                 mode="bilinear",
                 align_corners=False,
             ).squeeze(0)    # (k,o_h,o_w)
@@ -112,15 +119,15 @@ def val_one_epoch(model, val_loader, evaluators, device, cfg, visual_args=None):
                     draw_building_split_pred(datainfo, pred_info, pred_save_dir)
                 
                 if draw_func == 'draw_cell_pred':
-                    gt_info = dict(gt_inst_mask = sampled_batch['gt_inst_mask'][idx])
+                    gt_info = dict(gt_inst_mask = gt_inst_mask)
                     pred_info['pred_inst_mask'] = pred_inst_mask
                     draw_cell_pred(datainfo, gt_info, pred_info, pred_save_dir)
                 if draw_func == 'draw_cell_color':
-                    gt_info = dict(gt_inst_mask = sampled_batch['gt_inst_mask'][idx])
+                    gt_info = dict(gt_inst_mask = gt_inst_mask)
                     pred_info['pred_inst_mask'] = pred_inst_mask
                     draw_cell_color(datainfo, gt_info, pred_info, pred_save_dir)
                 if draw_func == 'draw_boundary_pred':
-                    gt_info = dict(gt_inst_mask = sampled_batch['gt_inst_mask'][idx], 
+                    gt_info = dict(gt_inst_mask = gt_inst_mask, 
                                    gt_boundary = sampled_batch['gt_boundary_mask'][idx])
                     pred_info['pred_inst_mask'] = pred_inst_mask
                     pred_info['pred_boundary'] = pred_boundary_mask

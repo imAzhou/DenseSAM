@@ -2,8 +2,8 @@ import os
 import torch
 import argparse
 from utils import set_seed
-from models.dense_sam import DenseSAMNet
-from datasets.create_loader import gene_loader_trainval
+from densesam.models.dense_sam import DenseSAMNet
+from densesam.datasets.create_loader import gene_loader_trainval
 from mmengine.config import Config
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -53,8 +53,7 @@ def draw_embed(draw_items, datainfo, pred_save_dir):
 
 def main():
     # load datasets
-    train_dataloader, val_dataloader, metainfo, restinfo = gene_loader_trainval(
-        dataset_config = cfg, seed = args.seed)
+    train_dataloader, val_dataloader, metainfo, restinfo = gene_loader_trainval(dataset_config = cfg, seed = args.seed)
     
     dataset_tag = cfg['dataset_tag']
     specified_image_name = 'image_00_3.png'

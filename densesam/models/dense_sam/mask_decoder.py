@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import torch
-from torch import nn
+from torch import Tensor, nn
 from torch.nn import functional as F
 from typing import List, Tuple, Type
 
@@ -22,7 +22,9 @@ class MaskDecoder(nn.Module):
         iou_head_depth: int = 3,
         iou_head_hidden_dim: int = 256,
         encoder_embed_dim: int = 1280,
-        use_inner_feat = False,
+        use_local = False,
+        use_global = False,
+        use_inner_idx = [],
         use_boundary_head = False,
     ) -> None:
         """
@@ -44,7 +46,6 @@ class MaskDecoder(nn.Module):
         super().__init__()
         self.transformer_dim = transformer_dim
         self.transformer = transformer
-        self.use_inner_feat = use_inner_feat
         self.num_mask_tokens = 1
         self.use_boundary_head = use_boundary_head
 
@@ -70,17 +71,6 @@ class MaskDecoder(nn.Module):
         )
 
         # new paramters
-        if use_inner_feat:
-            embed_dim, out_chans = encoder_embed_dim, transformer_dim
-            self.process_inter_feat = nn.Sequential(
-                nn.Conv2d(embed_dim, embed_dim, kernel_size=1),
-                nn.Conv2d(embed_dim, embed_dim, kernel_size=3, 
-                          groups = embed_dim, padding='same'),
-                nn.ReLU(),
-                nn.Conv2d(embed_dim, embed_dim//2, kernel_size=1),
-                nn.ReLU(),
-                nn.Conv2d(embed_dim//2, out_chans, kernel_size=1)
-            )
         if use_boundary_head:
             self.output_boundary_mlps = nn.ModuleList(
                 [
@@ -88,13 +78,21 @@ class MaskDecoder(nn.Module):
                     for i in range(self.num_mask_tokens)
                 ]
             )
+        self.use_inner_idx = use_inner_idx
+        self.use_local = use_local
+        self.use_global = use_global
+        if self.use_local:
+            self.local_process = LocalModule(encoder_embed_dim, transformer_dim)
+        if self.use_global:
+            self.global_process = GlobalModule(encoder_embed_dim, transformer_dim, 128)
+
     def forward(
         self,
         image_embeddings: torch.Tensor,
         image_pe: torch.Tensor,
         sparse_prompt_embeddings: torch.Tensor,
         dense_prompt_embeddings: torch.Tensor,
-        inter_feature: torch.Tensor,
+        inner_feats: list[torch.Tensor],
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Predict masks given image and prompt embeddings.
@@ -116,7 +114,7 @@ class MaskDecoder(nn.Module):
             image_pe=image_pe,
             sparse_prompt_embeddings = sparse_prompt_embeddings,
             dense_prompt_embeddings = dense_prompt_embeddings,
-            inter_feature = inter_feature
+            inner_feats = inner_feats,
         )
         masks,iou_pred = outputs['logits_256'],outputs['iou_pred']
 
@@ -135,7 +133,7 @@ class MaskDecoder(nn.Module):
         image_pe: torch.Tensor,
         sparse_prompt_embeddings: torch.Tensor,
         dense_prompt_embeddings: torch.Tensor,
-        inter_feature: torch.Tensor
+        inner_feats: list[torch.Tensor],
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         predict masks for <image_embeddings, prompt> pairs.
@@ -171,19 +169,29 @@ class MaskDecoder(nn.Module):
         src = image_embeddings + dense_prompt_embeddings
         b, c, h, w = src.shape
         pos_src = torch.repeat_interleave(image_pe, b, dim=0)
+
+        fused_feat,contrast_feat = [],None
+        if self.use_local:
+            fused_feat.append(self.local_process(inner_feats))
+        if self.use_global:
+            contrast_feat = self.global_process(inner_feats)
+            fused_feat.append(contrast_feat)
         
+        if len(fused_feat) == 0:
+            fused_feat = None
+        elif len(fused_feat) == 1:
+            fused_feat = fused_feat[0]
+        elif len(fused_feat) == 2:
+            fused_feat = sum(fused_feat)
+
         # Run the transformer
-        inter_feat_c256 = None
-        if self.use_inner_feat:
-            inter_feat_c256 = self.process_inter_feat(inter_feature.permute(0, 3, 1, 2))
-        
-        hs, src = self.transformer(src, pos_src, tokens, inter_feat_c256)
+        hs, src, decoder_inner_embeds = self.transformer(src, pos_src, tokens, fused_feat)
         iou_token_out = hs[:, 0, :]
         mask_tokens_out = hs[:, 1 : (1 + self.num_mask_tokens), :]
 
         # Upscale mask embeddings and predict masks using the mask tokens
         src = src.transpose(1, 2).view(b, c, h, w)
-        upscaled_embedding = self.output_upscaling(src)
+        upscaled_embedding = self.output_upscaling(src)     
 
         hyper_in_list: List[torch.Tensor] = []
         for i in range(self.num_mask_tokens):
@@ -199,8 +207,11 @@ class MaskDecoder(nn.Module):
             'logits_256': masks,
             'iou_pred': iou_pred,
             'src': src,
+            'contrast_feat': contrast_feat,
+            'fused_feat': fused_feat,
             'upscaled_embedding': upscaled_embedding,
             'mask_tokens_out': mask_tokens_out,
+            'decoder_inner_embeds': decoder_inner_embeds
         }
 
         if self.use_boundary_head:
@@ -213,8 +224,6 @@ class MaskDecoder(nn.Module):
             outputs['logits_256'] = torch.cat((masks,boundary_masks),dim=1)
 
         return outputs
-
-
 
 # Lightly adapted from
 # https://github.com/facebookresearch/MaskFormer/blob/main/mask_former/modeling/transformer/transformer_predictor.py # noqa
@@ -241,3 +250,82 @@ class MLP(nn.Module):
         if self.sigmoid_output:
             x = F.sigmoid(x)
         return x
+
+class LocalModule(nn.Module):
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+    ) -> None:
+        super().__init__()
+
+        self.module = nn.Sequential(
+            nn.Conv2d(input_dim, input_dim, kernel_size=3, 
+                    groups = input_dim, padding='same'),
+            nn.Conv2d(input_dim, input_dim, kernel_size=1),
+            nn.ReLU(),
+            nn.Conv2d(input_dim, input_dim//2, kernel_size=1),
+            nn.ReLU(),
+            nn.Conv2d(input_dim//2, output_dim, kernel_size=1)
+        )
+        
+    def forward(self, feats: Tensor) -> Tensor:
+        local_feats = []
+        for x in feats:
+            local_feat = self.module(x.permute(0, 3, 1, 2))
+            local_feat = local_feat.flatten(2).permute(0, 2, 1)
+            local_feats.append(local_feat)
+        if len(local_feats) > 1:
+            fused_feat = sum(local_feats)
+        else:
+            fused_feat = local_feats[0]
+        return fused_feat
+        
+
+class GlobalModule(nn.Module):
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        hidden_dim: int,
+    ) -> None:
+        super().__init__()
+
+        # self.global_dwconv = nn.Conv2d(
+        #         input_dim, input_dim, 3, 1, 1, groups=input_dim)
+        self.global_contrast = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim),
+        )
+        # self.global_reduce = nn.Linear(input_dim, output_dim)
+        
+    # def forward(self, feats: Tensor) -> Tensor:
+    #     global_feats = []
+    #     for x in feats:
+    #         # global_feat = self.global_dwconv(x.permute(0, 3, 1, 2))
+    #         global_feat = x.permute(0, 3, 1, 2)
+    #         global_feat = global_feat.flatten(2).permute(0, 2, 1)
+    #         contrast_feat = self.global_contrast(global_feat)
+    #         global_feats.append(contrast_feat)        
+        
+    #     if len(global_feats) > 1:
+    #         fused_feat = sum(global_feats)
+    #     else:
+    #         fused_feat = global_feats[0]
+    #     norm_feat = F.normalize(fused_feat, dim=2)  # bs, h*w, c
+    #     reduce_feat = self.global_reduce(norm_feat)
+        
+    #     return norm_feat, reduce_feat
+
+    def forward(self, feats: Tensor) -> Tensor:
+        contrast_feats = []
+        for x in feats:
+            con_feat = self.global_contrast(
+                x.permute(0, 3, 1, 2).flatten(2).permute(0, 2, 1))
+            contrast_feats.append(con_feat)
+        contrast_feats = torch.stack(contrast_feats)  # k, bs, h*w, c
+        contrast_feats = torch.mean(contrast_feats, dim=0)  # bs, h*w, c
+        contrast_feats = F.normalize(contrast_feats, dim=2)  # bs, h*w, c
+        return contrast_feats
+

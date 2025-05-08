@@ -145,6 +145,6 @@ python scripts/inference_nometric.py \
     logs/cnseg/2024_09_16_09_13_30/config.py \
     logs/alnet/clusteredCell2JFSW_large_aug \
     logs/cnseg/2024_09_16_09_13_30/checkpoints/best.pth \
-    /x22201018/datasets/CervicalDatasets/JFSW/images \
+    datasets/CervicalDatasets/JFSW/images \
     --visual_interval 1
 '''

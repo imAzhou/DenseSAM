@@ -27,14 +27,14 @@ def main(logger_name, cfg):
 
     # register model
     model = DenseSAMNet(
-        sm_depth = cfg.semantic_module_depth,
-        use_inner_feat = cfg.use_inner_feat,
+        use_local = cfg.use_local,
+        use_global = cfg.use_global,
         use_boundary_head = cfg.use_boundary_head,
         use_embed = cfg.dataset.load_embed,
         sam_ckpt = cfg.sam_ckpt,
         sam_type = cfg.sam_type,
         device = device,
-        inter_idx = cfg.inter_idx
+        use_inner_idx = cfg.use_inner_idx
     ).to(device)
     
     # create logger
@@ -116,7 +116,10 @@ if __name__ == "__main__":
 
 '''
 python scripts/train.py \
-    densesam/configs/datasets/lip.py \
-    --record_save_dir logs/rebuttal/lip \
-    --print_interval 30
+    densesam/configs/datasets/conic.py \
+    --record_save_dir logs/conic \
+    --print_interval 20 \
+    --device cuda:1
+    
+MedicalDatasets/CoNIC/train/img_dir/crag_15_0023.png
 '''

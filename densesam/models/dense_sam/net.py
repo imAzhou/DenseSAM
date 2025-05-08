@@ -13,14 +13,14 @@ from skimage.segmentation import watershed
 class DenseSAMNet(nn.Module):
 
     def __init__(self, 
-                 sm_depth = 1,
-                 use_inner_feat = False,
+                 use_local = False,
+                 use_global = False,
                  use_embed = False,
                  use_boundary_head = False,
                  sam_ckpt = None,
                  sam_type = 'vit_h',
                  device = None,
-                 inter_idx = 1
+                 use_inner_idx = []
                 ):
         '''
         Args:
@@ -34,8 +34,6 @@ class DenseSAMNet(nn.Module):
         super(DenseSAMNet, self).__init__()
         assert sam_type in ['vit_b','vit_l','vit_h'], "sam_type must be in ['vit_b','vit_l','vit_h']"
 
-        self.use_inner_feat = use_inner_feat
-        self.inter_idx = inter_idx
         self.use_embed = use_embed
         self.device = device
         
@@ -51,11 +49,11 @@ class DenseSAMNet(nn.Module):
             'vit_h': 1280
         }
         self.mask_decoder = MaskDecoder(
+            transformer = TwoWayTransformer(),
             encoder_embed_dim = encoder_embed_dim[sam_type],
-            transformer = TwoWayTransformer(
-                sm_depth = sm_depth,
-            ),
-            use_inner_feat = use_inner_feat,
+            use_local = use_local,
+            use_global = use_global,
+            use_inner_idx = use_inner_idx,
             use_boundary_head = use_boundary_head,
         )
 
@@ -66,7 +64,9 @@ class DenseSAMNet(nn.Module):
         
         self_mask_decoder_parmas = self.mask_decoder.state_dict()
 
-        load_dict = {}
+        load_dict = {
+            'mask_tokens.weight': sam_mask_decoder_params['mask_tokens.weight'][2,:].unsqueeze(0)
+        }
         load_params_from_sam = [
             'transformer', 'output_upscaling', 
         ]
@@ -75,6 +75,7 @@ class DenseSAMNet(nn.Module):
                 if key in name:
                     load_dict[name] = param
                     break
+
         self_mask_decoder_parmas.update(load_dict)
 
         print('='*10 + ' load parameters from sam ' + '='*10)
@@ -84,8 +85,8 @@ class DenseSAMNet(nn.Module):
     def freeze_parameters(self):
 
         update_param = [
-            'semantic_module',
-            'process_inter_feat',
+            'local_process',
+            'global_process',
             'mask_tokens',
             'output_hypernetworks_mlps',
             'output_boundary_mlps'
@@ -123,7 +124,8 @@ class DenseSAMNet(nn.Module):
 
     def forward(self, sampled_batch):
         
-        bs_image_embedding,inter_feature = self.gene_img_embed(sampled_batch)
+        # bs_image_embedding,shallow_feat,deep_feat = self.gene_img_embed(sampled_batch)
+        bs_image_embedding,inner_feats = self.gene_img_embed(sampled_batch)
         sparse_embeddings, dense_embeddings = self.prompt_encoder(
             points = None,
             boxes = None,
@@ -137,7 +139,9 @@ class DenseSAMNet(nn.Module):
             image_pe = image_pe,
             sparse_prompt_embeddings = sparse_embeddings,
             dense_prompt_embeddings = dense_embeddings,
-            inter_feature = inter_feature,
+            inner_feats = inner_feats
+            # shallow_feat = shallow_feat,
+            # deep_feat = deep_feat,
         )
         # origin_size = sampled_batch['data_samples'][0].ori_shape
         # logits_1024 = F.interpolate(
@@ -188,24 +192,17 @@ class DenseSAMNet(nn.Module):
         
         if self.use_embed:
             bs_image_embedding = torch.stack(sampled_batch['img_embed']).to(self.device)
-            if self.use_inner_feat:
-                inter_feature = torch.stack(sampled_batch['inter_feat']).to(self.device)
-            else:
-                inter_feature = None
+            inter_feature = torch.stack(sampled_batch['inter_feat']).to(self.device)
         else:
             with torch.no_grad():
                 # input_images.shape: [bs, 3, 1024, 1024]
                 image_tensor = torch.stack(sampled_batch['inputs'])  # (bs, 3, 1024, 1024), 3 is bgr
-                # image_tensor_rgb = image_tensor[:, [2, 1, 0], :, :]
-                # input_images = self.preprocess(image_tensor_rgb).to(self.device)
-                input_images = image_tensor.to(self.device)
-                # bs_image_embedding.shape: [bs, c=256, h=64, w=64]
-                if self.use_inner_feat:
-                    bs_image_embedding,inter_feature = self.image_encoder(input_images, need_inter=True)
-                    bs_image_embedding,inter_feature = bs_image_embedding.detach(),inter_feature[self.inter_idx].detach()
-                else:
-                    bs_image_embedding = self.image_encoder(input_images, need_inter=False).detach()
-                    inter_feature = None
+                image_tensor_rgb = image_tensor[:, [2, 1, 0], :, :]
+                input_images = self.preprocess(image_tensor_rgb).to(self.device)
 
-        return bs_image_embedding,inter_feature
+                # bs_image_embedding.shape: [bs, c=256, h=64, w=64]
+                bs_image_embedding,inter_feature = self.image_encoder(input_images, need_inter=True)
+
+        # return bs_image_embedding.detach(),shallow_feat,deep_feat
+        return bs_image_embedding.detach(),inter_feature
     

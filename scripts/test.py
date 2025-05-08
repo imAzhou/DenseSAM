@@ -34,14 +34,14 @@ if __name__ == "__main__":
 
     # register model
     model = DenseSAMNet(
-        sm_depth = cfg.semantic_module_depth,
-        use_inner_feat = cfg.use_inner_feat,
+        use_local = cfg.use_local,
+        use_global = cfg.use_global,
         use_boundary_head = cfg.use_boundary_head,
         use_embed = cfg.dataset.load_embed,
         sam_ckpt = cfg.sam_ckpt,
         sam_type = cfg.sam_type,
         device = device,
-        inter_idx = cfg.inter_idx
+        use_inner_idx = cfg.use_inner_idx
     ).to(device)
     
     visual_args = {'visual_pred':args.visual_pred}
@@ -67,10 +67,11 @@ if __name__ == "__main__":
 draw_building_pred draw_building_split_pred draw_cell_pred draw_boundary_pred draw_cell_color
 
 python scripts/test.py \
-    logs/cpm17/config.py \
-    logs/cpm17 \
-    logs/cpm17/checkpoints/best.pth \
+    logs/conic/2025_01_21_04_31_16/config.py \
+    logs/conic/2025_01_21_04_31_16 \
+    logs/conic/2025_01_21_04_31_16/checkpoints/best.pth \
     --visual_pred \
-    --draw_func draw_building_split_pred \
-    --visual_interval 1
+    --draw_func draw_cell_color \
+    --visual_interval 1 \
+    --seed 666
 '''

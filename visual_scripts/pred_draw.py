@@ -22,7 +22,8 @@ def draw_boundary_pred(datainfo:DetDataSample, gt_info, pred_info,pred_save_dir)
     
     pred_mask = pred_info['pred_mask']
     pred_inst_mask = pred_info['pred_inst_mask']
-    pred_boundary = pred_info['pred_boundary'].detach().cpu()
+    # pred_boundary = pred_info['pred_boundary'].detach().cpu()
+    pred_boundary = pred_info['pred_boundary']
 
     rgbs = [[255,255,255],[47, 243, 15]]
 
@@ -48,17 +49,18 @@ def draw_boundary_pred(datainfo:DetDataSample, gt_info, pred_info,pred_save_dir)
     
     ax = fig.add_subplot(234)
     ax.imshow(img)
-    show_multi_mask(pred_mask.cpu(), ax, palette = rgbs)
+    show_multi_mask(pred_mask, ax, palette = rgbs)
     ax.set_title('pred mask')
     ax = fig.add_subplot(235)
-    show_color_gt = np.zeros((h,w,4))
-    show_color_gt[:,:,3] = 1
-    inst_nums = len(np.unique(pred_inst_mask)) - 1
-    for i in range(inst_nums):
-        color_mask = np.concatenate([np.random.random(3), [1]])
-        show_color_gt[pred_inst_mask==i+1] = color_mask
-    ax.imshow(show_color_gt)
-    ax.set_title('color pred')
+    ax.imshow(pred_mask, cmap='gray')
+    # show_color_gt = np.zeros((h,w,4))
+    # show_color_gt[:,:,3] = 1
+    # inst_nums = len(np.unique(pred_inst_mask)) - 1
+    # for i in range(inst_nums):
+    #     color_mask = np.concatenate([np.random.random(3), [1]])
+    #     show_color_gt[pred_inst_mask==i+1] = color_mask
+    # ax.imshow(show_color_gt)
+    # ax.set_title('color pred')
     ax = fig.add_subplot(236)
     ax.imshow(pred_boundary, cmap='gray')
     ax.set_title('pred boundary')

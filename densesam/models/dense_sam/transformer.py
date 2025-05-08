@@ -8,7 +8,8 @@ from torch import Tensor, nn
 import math
 from typing import Tuple, Type
 from densesam.models.sam.modeling import MLPBlock,Attention
-
+from densesam.models.sam.modeling.prompt_encoder import PositionEmbeddingRandom
+import torch.nn.functional as F
 
 class TwoWayTransformer(nn.Module):
     def __init__(
@@ -19,7 +20,6 @@ class TwoWayTransformer(nn.Module):
         mlp_dim: int = 2048,
         activation: Type[nn.Module] = nn.ReLU,
         attention_downsample_rate: int = 2,
-        sm_depth: int = 1,
     ) -> None:
         """
         A transformer decoder that attends to an input image using
@@ -39,6 +39,12 @@ class TwoWayTransformer(nn.Module):
         self.num_heads = num_heads
         self.mlp_dim = mlp_dim
         self.layers = nn.ModuleList()
+        
+        # self.global_module = GlobalContextModule(embedding_dim, num_heads)
+        
+        # self.sm_depth = sm_depth
+        # if sm_depth > 0:
+        #     self.global_module = GlobalContextModule(encoder_embed_dim, num_heads)
 
         for i in range(depth):
             self.layers.append(
@@ -49,7 +55,6 @@ class TwoWayTransformer(nn.Module):
                     activation=activation,
                     attention_downsample_rate=attention_downsample_rate,
                     skip_first_layer_pe=(i == 0),
-                    sm_depth = sm_depth,
                 )
             )
 
@@ -64,7 +69,7 @@ class TwoWayTransformer(nn.Module):
         image_embedding: Tensor,
         image_pe: Tensor,
         point_embedding: Tensor,
-        inter_feat_c256: Tensor = None,
+        fused_feat: Tensor,
     ) -> Tuple[Tensor, Tensor]:
         """
         Args:
@@ -79,6 +84,7 @@ class TwoWayTransformer(nn.Module):
           torch.Tensor: the processed point_embedding
           torch.Tensor: the processed image_embedding
         """
+
         # BxCxHxW -> BxHWxC == B x N_image_tokens x C
         image_embedding = image_embedding.flatten(2).permute(0, 2, 1)
         image_pe = image_pe.flatten(2).permute(0, 2, 1)
@@ -86,20 +92,30 @@ class TwoWayTransformer(nn.Module):
         # Prepare queries
         queries = point_embedding
         keys = image_embedding
-        if inter_feat_c256 is not None:
-            inter_feat_c256 = inter_feat_c256.flatten(2).permute(0, 2, 1)
         
+        # cxt_keys = self.global_module(keys)
+
+        all_decoder_inner_embeds = []
+        # b,l,c = fused_feat.shape
+        # patch_size = int(math.sqrt(l))
+        # fused_feat_2d = fused_feat.transpose(-1,-2).view(b, c, patch_size, patch_size)
+        # all_decoder_inner_embeds.append(fused_feat_2d.permute(0,2,3,1))
+
         # Apply transformer blocks and final layernorm
         for i,layer in enumerate(self.layers):
-            queries, keys = layer(
+
+            # keys = keys + cxt_keys
+            if fused_feat is not None:               
+                keys = keys + fused_feat
+                
+            queries, keys, decoder_inner_embeds = layer(
                 queries=queries,
                 keys=keys,
                 query_pe=point_embedding,
                 key_pe=image_pe,
             )
-            
-            if inter_feat_c256 is not None:
-                keys += inter_feat_c256
+
+            all_decoder_inner_embeds.extend(decoder_inner_embeds)
         
         # Apply the final attention layer from the points to the image
         q = queries + point_embedding
@@ -109,7 +125,7 @@ class TwoWayTransformer(nn.Module):
         queries = queries + attn_out
         queries = self.norm_final_attn(queries)
 
-        return queries, keys
+        return queries, keys, all_decoder_inner_embeds
 
 
 class TwoWayAttentionBlock(nn.Module):
@@ -121,7 +137,6 @@ class TwoWayAttentionBlock(nn.Module):
         activation: Type[nn.Module] = nn.ReLU,
         attention_downsample_rate: int = 2,
         skip_first_layer_pe: bool = False,
-        sm_depth: int = 1
     ) -> None:
         """
         A transformer block with four layers: (1) self-attention of sparse
@@ -152,9 +167,6 @@ class TwoWayAttentionBlock(nn.Module):
         self.cross_attn_image_to_token = Attention(
             embedding_dim, num_heads, downsample_rate=attention_downsample_rate
         )
-        self.sm_depth = sm_depth
-        if sm_depth > 0:
-            self.semantic_module = SemanticModule(embedding_dim, sm_depth)
 
         self.skip_first_layer_pe = skip_first_layer_pe
 
@@ -172,9 +184,7 @@ class TwoWayAttentionBlock(nn.Module):
         
         queries = self.norm1(queries)
 
-        if self.sm_depth > 0:
-            semantic_keys = self.semantic_module(keys)
-            keys = keys + semantic_keys
+        decoder_inner_embeds = []
 
         # Cross attention block, tokens attending to image embedding
         q = queries + query_pe
@@ -192,21 +202,15 @@ class TwoWayAttentionBlock(nn.Module):
         q = queries + query_pe
         k = keys + key_pe
         attn_out = self.cross_attn_image_to_token(q=k, k=q, v=queries)
-
-        # azhou add
-        # if self.sm_depth > 0:
-        #     semantic_keys = self.semantic_module(keys)
-        #     keys = keys + semantic_keys + attn_out
-        # else:
-        #     keys = keys + attn_out
-        
+     
         keys = self.norm4(keys)
 
-        # if self.sm_depth > 0:
-        #     semantic_keys = self.semantic_module(keys)
-        #     keys = keys + semantic_keys
+        b,l,c = keys.shape
+        patch_size = int(math.sqrt(l))
+        keys_2d = keys.transpose(-1,-2).view(b, c, patch_size, patch_size)
+        decoder_inner_embeds.append(keys_2d.permute(0,2,3,1))
 
-        return queries, keys
+        return queries, keys, decoder_inner_embeds
 
 class SemanticModule(nn.Module):
 
@@ -216,10 +220,9 @@ class SemanticModule(nn.Module):
         sm_depth: int,
     ) -> None:
         super().__init__()
-               
+
         self.local_conv = nn.ModuleList()
-        self.sm_depth = sm_depth
-        for i in range(self.sm_depth):
+        for i in range(sm_depth):
             block = nn.Sequential(
                 nn.Conv2d(embedding_dim, embedding_dim*2, kernel_size=1),
                 nn.BatchNorm2d(embedding_dim*2),
@@ -242,4 +245,41 @@ class SemanticModule(nn.Module):
         semantic_tokens = local_conv_f.flatten(2).permute(0, 2, 1)
 
         return semantic_tokens
+
+class GlobalContextModule(nn.Module):
+
+    def __init__(
+        self,
+        embedding_dim: int,
+        num_heads: int,
+    ) -> None:
+        super().__init__()
+
+        self.pe_layer = PositionEmbeddingRandom(embedding_dim // 2)
+        # self.pooling = nn.AvgPool2d(kernel_size=2, stride=2, padding=0)
+        self.self_attn = Attention(embedding_dim, num_heads)
+
+    def forward(self, tokens: Tensor) -> Tensor:
+
+        b,l,c = tokens.shape
+        patch_size = int(math.sqrt(l))
+        # conv_feat = tokens.transpose(-1,-2).view(b, c, patch_size, patch_size)
+        # poolout = self.pooling(conv_feat)
+        # b,c,h,w = poolout.shape
+        # poolout_pe = self.pe_layer((h,w)).unsqueeze(0)
+        
+        # squence_feat = (poolout + poolout_pe).flatten(2).permute(0, 2, 1)   # bs,h*w, c
+        
+        squence_pe = self.pe_layer((patch_size,patch_size)).unsqueeze(0).flatten(2).permute(0, 2, 1)
+        squence_feat = tokens + squence_pe
+        cxt_tokens = self.self_attn(q=squence_feat, k=squence_feat, v=squence_feat)
+        
+        # b, cxt_l ,c = cxt_tokens.shape
+        # cxt_patch_size = int(math.sqrt(cxt_l))
+        # cxt_conv_feat = cxt_tokens.transpose(-1,-2).view(b, c, cxt_patch_size, cxt_patch_size)
+        # cxt_output = F.interpolate(cxt_conv_feat, size=(patch_size, patch_size), mode='bilinear', align_corners=False)
+
+        # return cxt_output.flatten(2).permute(0, 2, 1)
+
+        return cxt_tokens
   

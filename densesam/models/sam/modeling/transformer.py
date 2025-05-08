@@ -184,13 +184,10 @@ class TwoWayAttentionBlock(nn.Module):
         attn_out = self.cross_attn_image_to_token(q=k, k=q, v=queries)
         keys = keys + attn_out
         
+        keys = self.norm4(keys)
+        
         b,l,c = keys.shape
         patch_size = int(math.sqrt(l))
-        keys_2d = keys.transpose(-1,-2).view(b, c, patch_size, patch_size)
-        decoder_inner_embeds.append(keys_2d.permute(0,2,3,1))
-        
-        keys = self.norm4(keys)
-
         keys_2d = keys.transpose(-1,-2).view(b, c, patch_size, patch_size)
         decoder_inner_embeds.append(keys_2d.permute(0,2,3,1))
 

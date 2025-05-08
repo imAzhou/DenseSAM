@@ -3,9 +3,9 @@ from .load_dataset import LoadDataset
 class BuildingBinaryDataset(LoadDataset):
 
        METAINFO = dict(
-        classes=('Background','human',),
+        classes=('Background','Building',),
         palette=[[255, 255, 255], [244, 251, 4]],
-        thing_classes=('human'),
+        thing_classes=('Building'),
         stuff_classes=('Background')
        )
 

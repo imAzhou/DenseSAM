@@ -2,14 +2,14 @@ import os
 import torch
 import argparse
 from utils import get_prompt,show_points,show_box
-from datasets.create_loader import gene_loader_trainval
+from densesam.datasets.create_loader import gene_loader_trainval
 from mmengine.config import Config
 from utils.metrics import get_metrics
 from mmdet.evaluation.functional import INSTANCE_OFFSET
 from tqdm import tqdm
 import numpy as np
 import cv2
-from models.dense_sam import SAMBaselineNet
+from densesam.models.dense_sam import SAMBaselineNet
 import matplotlib.pyplot as plt
 import copy
 import random
@@ -29,7 +29,7 @@ parser.add_argument('--visual_pred', action='store_true')
 args = parser.parse_args()
 
 semantic_sets = ['whu', 'inria', 'mass']
-instance_sets = ['pannuke_binary', 'monuseg', 'cpm17']
+instance_sets = ['conic', 'monuseg', 'cpm17']
 
 def onehot2instmask(onehot_mask):
     h,w = onehot_mask.shape[1],onehot_mask.shape[2]

@@ -2,7 +2,7 @@ import torch
 import os
 import argparse
 from utils import set_seed,show_points,show_box,show_mask
-from models.dense_sam import DenseSAMNet
+from densesam.models.dense_sam import DenseSAMNet
 import matplotlib.pyplot as plt
 import cv2
 import numpy as np
@@ -62,10 +62,11 @@ def sample_prompt(inst_mask):
 
 
 def main():
-    sam_ckpt = '/x22201018/codes/SAM/checkpoints_sam/sam_vit_h_4b8939.pth'
+    sam_ckpt = 'checkpoints_sam/sam_vit_h_4b8939.pth'
     save_dir = f'visual_results/sam_embed_in_prompt'
-    root_dir = '/x22201018/datasets/MedicalDatasets/CPM17/test_p512'
-    image_name = 'image_03_0'
+    root_dir = 'datasets/MedicalDatasets/CPM17/test_p512'
+    # image_name = 'image_03_0'
+    image_name = 'image_00_3'
     vis_png = f'{root_dir}/img_dir/{image_name}.png'
     gt_mask = f'{root_dir}/panoptic_seg_anns_coco/{image_name}.png'
     vis_embed = f'{root_dir}/img_tensor/{image_name}.pt'
